@@ -28,6 +28,8 @@ class Terminal(object):
     supported on the current platform with the available set of Python modules.
     """
 
+    _COLORS = "BLACK BLUE GREEN CYAN RED MAGENTA YELLOW WHITE".split()
+
     @classmethod
     def create(self, stream=None, is_tty=None):
         """Creates an appropriate ``Terminal`` subclass by evaluating the
@@ -78,7 +80,7 @@ class Terminal(object):
         """
         self.stream = stream or sys.stdout
         self._initialized = False
-        self._control_sequences = {}
+        self._control_sequences = None
         self._deinit_hook = None
         if is_tty is not None:
             self._is_tty = bool(is_tty)
@@ -95,7 +97,7 @@ class Terminal(object):
         if self._initialized:
             raise RuntimeError("terminal is already initialized")
 
-        self._control_sequences = {}
+        self._control_sequences = self._create_empty_control_sequences()
         self._deinit_hook = None
 
         self._initialized = True
@@ -114,7 +116,7 @@ class Terminal(object):
             self._deinit_hook()
 
         self._is_tty = False
-        self._control_sequences = {}
+        self._control_sequences = None
         self._deinit_hook = None
         self._initialized = False
 
@@ -170,12 +172,20 @@ class Terminal(object):
     def __exit__(self, type, value, traceback):
         self.deinit()
 
+    def _create_empty_control_sequences(self):
+        """Creates a default set of control sequences that simply map all
+        the tokens handled by the ``render()`` method to empty strings."""
+        keys = "BLINK BOLD DIM NORMAL REVERSE".split()
+        keys.extend(self._COLORS)
+        keys.extend("FG_{0}".format(color) for color in self._COLORS)
+        keys.extend("BG_{0}".format(color) for color in self._COLORS)
+        return dict((key, '') for key in keys)
+
 
 class CursesTerminal(Terminal):
     """Terminal class that uses the ``curses`` module to retrieve the escape
     sequences needed for controlling the cursor and the colors."""
 
-    _COLORS = "BLACK BLUE GREEN CYAN RED MAGENTA YELLOW WHITE".split()
     _ANSI_COLORS = "BLACK RED GREEN YELLOW BLUE MAGENTA CYAN WHITE".split()
 
     def __init__(self, stream=None, is_tty=None):
@@ -199,7 +209,6 @@ class CursesTerminal(Terminal):
         self._curses = curses
         curses.setupterm(fd=self.stream.fileno())
 
-        self._control_sequences = {}
         self._parse_background_control_sequences()
         self._parse_foreground_control_sequences()
         self._parse_styling_control_sequences()
@@ -227,7 +236,9 @@ class CursesTerminal(Terminal):
         capability = self._get_string_capability("setb")
         for index, color in enumerate(self._COLORS):
             key = "BG_{0}".format(color)
-            self._control_sequences[key] = self._tparm(capability, index)
+            value = self._tparm(capability, index)
+            if value:
+                self._control_sequences[key] = value
 
         capability = self._get_string_capability("setab")
         for index, color in enumerate(self._ANSI_COLORS):
@@ -243,8 +254,9 @@ class CursesTerminal(Terminal):
         capability = self._get_string_capability("setf")
         for index, color in enumerate(self._COLORS):
             key = "FG_{0}".format(color)
-            self._control_sequences[color] = self._control_sequences[key] = \
-                self._tparm(capability, index)
+            value = self._tparm(capability, index)
+            if value:
+                self._control_sequences[color] = self._control_sequences[key] = value
 
         capability = self._get_string_capability("setaf")
         for index, color in enumerate(self._ANSI_COLORS):
@@ -297,7 +309,6 @@ class ANSITerminal(Terminal):
 
         import colorama
         colorama.init()
-        self._control_sequences = {}
         self._deinit_hook = colorama.deinit
 
 
