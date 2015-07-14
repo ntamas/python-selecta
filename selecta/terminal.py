@@ -1,6 +1,7 @@
 """Terminal handling related classes and functions."""
 
 import os
+import re
 import sys
 
 from contextlib import contextmanager
@@ -213,7 +214,7 @@ class CursesTerminal(Terminal):
         self._parse_foreground_control_sequences()
         self._parse_styling_control_sequences()
 
-    def _get_string_capability(self, capability_name, strip_delays=False):
+    def _get_string_capability(self, capability_name, strip_delays=True):
         """Returns a string capability with the given name from terminfo.
 
         Args:
