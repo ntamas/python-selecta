@@ -175,12 +175,23 @@ class FuzzyIndex(IndexBase):
                 characters of the query.
         """
         score = 1
+        last_match_type = None
+
         for char in rest:
             end = token.find(char, start+1)
             if end < 0:
                 return None, None
 
-            score += (end - start)
+            if end == start+1:
+                # This is a sequential match. These matches are worth 2
+                # points only.
+                if last_match_type != "sequential":
+                    last_match_type = "sequential"
+                    score += 1
+            else:
+                last_match_type = "normal"
+                score += (end - start)
+
             start = end
         return score, end
 
