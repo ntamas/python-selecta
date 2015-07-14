@@ -3,7 +3,7 @@ from __future__ import print_function
 import argparse
 import sys
 
-from selecta.indexing import SubstringIndex
+from selecta.indexing import FuzzyIndex
 from selecta.ui import DumbUI
 from selecta.utils import identity
 from selecta.terminal import reopened_terminal, Terminal
@@ -66,7 +66,7 @@ def prepare_index(strings=sys.stdin, transform=str.strip):
         selecta.indexing.Index: the prepared index
     """
     transform = transform or identity
-    index = SubstringIndex(case_sensitive=False)
+    index = FuzzyIndex()
     for string in strings:
         index.add(transform(string))
     return index

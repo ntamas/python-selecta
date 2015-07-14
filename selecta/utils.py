@@ -1,4 +1,4 @@
-def all_occurrences_of_string(string, corpus):
+def each_index_of_string(string, corpus):
     """Finds all occurrences of a given string in a corpus.
 
     Args:
