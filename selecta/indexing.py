@@ -174,7 +174,7 @@ class FuzzyIndex(IndexBase):
                 or ``(None, None)`` if the token does not match the remaining
                 characters of the query.
         """
-        score = 1
+        score, end = 1, start
         last_match_type = None
 
         for char in rest:
@@ -187,6 +187,12 @@ class FuzzyIndex(IndexBase):
                 # points only.
                 if last_match_type != "sequential":
                     last_match_type = "sequential"
+                    score += 1
+            elif not token[end-1].isalnum():
+                # This character follows a non-alphanumeric character. This
+                # match is worth 2 points only.
+                if last_match_type != "boundary":
+                    last_match_type = "boundary"
                     score += 1
             else:
                 last_match_type = "normal"
