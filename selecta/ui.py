@@ -242,26 +242,27 @@ class SmartTerminalUI(TerminalUI):
 
         query = self.query
 
-        self.terminal.move_cursor(x=0)
-        self.terminal.write(self.prompt, raw=True)
-        # TODO: truncate the query from the front if too wide
-        self.terminal.write(query, raw=True)
-        self.terminal.clear_to_eol()
-        self.terminal.move_cursor(x=0, dy=1)
-
         self._best_matches = self.index.search(query) if self.index else []
         if self._best_matches and self._selected_index is None:
             self._selected_index = 0
         self._fix_selected_index()
 
-        num_lines_printed = self._show_matches(self._best_matches)
-        while num_lines_printed < self.hit_list_limit:
-            self.terminal.clear_to_eol()
+        with self.terminal.hidden_cursor():
+            # Draw the matches first
             self.terminal.move_cursor(x=0, dy=1)
-            num_lines_printed += 1
+            num_lines_printed = self._show_matches(self._best_matches)
+            while num_lines_printed < self.hit_list_limit:
+                self.terminal.clear_to_eol()
+                self.terminal.move_cursor(x=0, dy=1)
+                num_lines_printed += 1
 
-        self.terminal.move_cursor(x=len(self.prompt) + len(query),
-                                  dy=-num_lines_printed-1)
+            # Now draw the prompt and the query
+            self.terminal.move_cursor(x=0, dy=-num_lines_printed-1)
+            self.terminal.write(self.prompt, raw=True)
+            # TODO: truncate the query from the front if too wide
+            self.terminal.write(query, raw=True)
+            self.terminal.clear_to_eol()
+
 
     def reset(self):
         """Resets the UI to the initial state (no query, no matches, no
