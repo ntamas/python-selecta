@@ -5,9 +5,74 @@ import re
 import sys
 
 from contextlib import contextmanager
+from selecta.errors import NotSupportedError, TerminalInitError
 from string import Template
 
-__all__ = ["Terminal", "reopened_terminal"]
+__all__ = ["Keycodes", "Terminal", "getch", "reopened_terminal"]
+
+
+def _find_getch():
+    """Returns a cross-platform function that can be used to read a single
+    character from the terminal without echoing it to the user."""
+
+    try:
+        import termios
+    except ImportError:
+        # Non-POSIX system, so let's try msvcrt.getch
+        try:
+            import msvcrt
+            return msvcrt.getch
+        except ImportError:
+            def _getch():
+                raise NotImplementedError
+            return _getch
+
+    import tty
+    def _getch():
+        """Reads a single character from the terminal without echoing it
+        to the user."""
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            return sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    return _getch
+
+getch = _find_getch()
+
+
+class Keycodes(object):
+    """Class holding symbolic names for common keycodes that the user may
+    see when using getch_."""
+
+    BREAK = '\x03'
+    EOF = '\x04'
+    ENTER = '\r'
+    DELETE = '\x7f'
+
+    CTRL_H = '\x08'
+    CTRL_J = '\x0a'
+    CTRL_U = '\x15'
+    CTRL_M = '\x0d'
+    CTRL_N = '\x0e'
+    CTRL_P = '\x10'
+    CTRL_R = '\x12'
+    CTRL_W = '\x17'
+
+    @classmethod
+    def is_backspace_like(cls, char):
+        """Checks whether the given character is 'Backspace-like', i.e. it may
+        appear in response to the user pressing the Backspace key."""
+        return char in (cls.DELETE, cls.CTRL_H)
+
+    @classmethod
+    def is_enter_like(cls, char):
+        """Checks whether the given character is 'Enter-like', i.e. it may
+        appear in response to the user pressing the Enter key."""
+        return char in (cls.ENTER, cls.CTRL_M, cls.CTRL_J)
 
 
 class Terminal(object):
@@ -61,8 +126,8 @@ class Terminal(object):
             term = subclass(stream=stream, is_tty=is_tty)
             if term.supported:
                 return term
-        raise RuntimeError("no terminal class is supported on the "
-                           "current platform")
+        raise NotSupportedError("no terminal class is supported on the "
+                                "current platform")
 
     def __init__(self, stream=None, is_tty=None):
         """Constructor.
@@ -82,6 +147,7 @@ class Terminal(object):
         self.stream = stream or sys.stdout
         self._initialized = False
         self._control_sequences = None
+        self._parameterized_control_sequences = None
         self._deinit_hook = None
         if is_tty is not None:
             self._is_tty = bool(is_tty)
@@ -96,9 +162,10 @@ class Terminal(object):
             RuntimeError: when the terminal is already initialized
         """
         if self._initialized:
-            raise RuntimeError("terminal is already initialized")
+            raise TerminalInitError("terminal is already initialized")
 
         self._control_sequences = self._create_empty_control_sequences()
+        self._parameterized_control_sequences = {}
         self._deinit_hook = None
 
         self._initialized = True
@@ -111,15 +178,84 @@ class Terminal(object):
             RuntimeError: when the terminal has not been initialized
         """
         if not self._initialized:
-            raise RuntimeError("the terminal has not been initialized")
+            raise TerminalInitError("the terminal has not been initialized")
 
         if self._deinit_hook is not None:
             self._deinit_hook()
 
         self._is_tty = False
         self._control_sequences = None
+        self._parameterized_control_sequences = None
         self._deinit_hook = None
         self._initialized = False
+
+    def clear_to_eol(self):
+        """Clears the contents of the current line from the cursor position
+        to the end of the line."""
+        self.write("${CLEAR_EOL}")
+
+    def clear_to_eos(self):
+        """Clears the contents of the current line from the cursor position
+        to the end of the screen."""
+        self.write("${CLEAR_EOS}")
+
+    def getch(self):
+        """Reads a single character from the terminal without echoing it
+        to the user. Handles Ctrl-C and EOF properly by raising
+        KeyboardInterrupt or EOFError when needed. If you don't need this
+        behaviour, use the raw getch()_ function.
+        """
+        char = getch()
+        if char == Keycodes.BREAK:
+            raise KeyboardInterrupt
+        if char == Keycodes.EOF:
+            raise EOFError
+        return char
+
+    @contextmanager
+    def hidden_cursor(self):
+        """Context manager that hides the cursor temporarily while the
+        execution is in the context."""
+        self.write("${HIDE_CURSOR}")
+        try:
+            yield
+        finally:
+            self.write("${SHOW_CURSOR}")
+
+    def move_cursor(self, x=None, y=None, dx=0, dy=0):
+        """Moves the cursor to an absolute location or to a location relative
+        to the current position. Absolute positions take precedence over
+        relative ones.
+
+        Args:
+            x (int or None): the horizontal index of the cell to move the
+                cursor to
+            y (int or None): the vertical index of the cell to move the
+                cursor to
+            dx (int): the number of cells to move the cursor to the right,
+                relative to the current location (negative numbers mean left)
+            dy (int): the number of cells to move the cursor down,
+                relative to the current location (negative numbers mean up)
+        """
+        if y is not None:
+            raise NotImplementedError("move() not implemented yet for absolute "
+                                      "values in the Y direction")
+        else:
+            if dy > 0:
+                self.write("$DOWN" * dy)
+            elif dy < 0:
+                self.write("$UP" * -dy)
+
+        if x is not None:
+            self.write("$BOL")
+            if x > 0:
+                self.write("$RIGHT" * x)
+        else:
+            if dx > 0:
+                self.write("$RIGHT" * dx)
+            elif dx < 0:
+                self.write("$LEFT" * -dx)
+
 
     def render(self, template):
         """Replaces tokens of the form ``$TOKEN`` and ``${TOKEN}`` in the given
@@ -137,14 +273,38 @@ class Terminal(object):
 
             - ``BLINK`` switches to blinking text
 
+            - ``BOLD`` switches to bold text
+
             - ``DIM`` switches to dim text
 
             - ``REVERSE`` reverses the foreground and background colors
 
-            - ``BOLD`` switches to bold text
+            - ``UNDERLINE`` switches to underlined text
 
             - ``NORMAL`` resets the foreground and background color of the
               terminal to the default.
+
+            - ``UP``, ``DOWN``, ``LEFT`` and ``RIGHT`` move the cursor by
+              one cell in the given direction.
+
+            - ``BOL`` moves the cursor to the beginning of the current line
+
+            - ``EOL`` moves the cursor to the end of the current line
+
+            - ``CLEAR_BOL`` clears everything up to the beginning of the
+              current line while keeping the cursor in the same place
+
+            - ``CLEAR_EOL`` clears everything up to the end of the current line
+              while keeping the cursor in the same place
+
+            - ``CLEAR_EOS`` clears everything up to the end of the screen
+              while keeping the cursor in the same place
+
+            - ``CLEAR_SCREEN`` clears the entire screen
+
+            - ``HIDE_CURSOR`` hides the cursor
+
+            - ``SHOW_CURSOR`` shows the cursor
         """
         return Template(template).safe_substitute(self._control_sequences)
 
@@ -159,11 +319,23 @@ class Terminal(object):
         """
         raise NotImplementedError
 
-    def write(self, template):
+    def supports(self, *tokens):
+        """Returns whether the terminal supports all the given control
+        tokens. See the render_ method for the list of tokens that you may
+        pass here."""
+        return all(self._control_sequences.get(token) for token in tokens)
+
+    def write(self, template, raw=False):
         """Writes the given template to the attached stream of the terminal,
         replacing any tokens handled by the ``render()`` function before
-        actually printing it."""
-        self.stream.write(self.render(template))
+        actually printing it.
+
+        Args:
+            template (str): the template to write
+            raw (bool): when True, no replacements are performed on the
+                template
+        """
+        self.stream.write(self.render(template) if not raw else template)
         self.stream.flush()
 
     def __enter__(self):
@@ -176,10 +348,11 @@ class Terminal(object):
     def _create_empty_control_sequences(self):
         """Creates a default set of control sequences that simply map all
         the tokens handled by the ``render()`` method to empty strings."""
-        keys = "BLINK BOLD DIM NORMAL REVERSE".split()
+        keys = "BLINK BOLD DIM NORMAL REVERSE UNDERLINE UP DOWN LEFT RIGHT "\
+            "BOL EOL CLEAR_BOL CLEAR_EOL CLEAR_EOS CLEAR_SCREEN "\
+            "HIDE_CURSOR SHOW_CURSOR".split()
         keys.extend(self._COLORS)
         keys.extend("FG_{0}".format(color) for color in self._COLORS)
-        keys.extend("BG_{0}".format(color) for color in self._COLORS)
         return dict((key, '') for key in keys)
 
 
@@ -213,6 +386,8 @@ class CursesTerminal(Terminal):
         self._parse_background_control_sequences()
         self._parse_foreground_control_sequences()
         self._parse_styling_control_sequences()
+        self._parse_cursor_control_sequences()
+        self._parse_erasing_control_sequences()
 
     def _get_string_capability(self, capability_name, strip_delays=True):
         """Returns a string capability with the given name from terminfo.
@@ -248,6 +423,29 @@ class CursesTerminal(Terminal):
             if value:
                 self._control_sequences[key] = value
 
+    def _parse_cursor_control_sequences(self):
+        """Parses the control sequences from terminfo that control the location
+        and appearance of the cursor."""
+        self._parse_capabilities(BOL="cr", UP="cuu1", DOWN="cud1",
+                                 LEFT="cub1", RIGHT="cuf1",
+                                 HIDE_CURSOR="cinvis", SHOW_CURSOR="cnorm")
+
+    def _parse_erasing_control_sequences(self):
+        """Parses the control sequences from terminfo that erase content from
+        the terminal."""
+        self._parse_capabilities(CLEAR_BOL="el1", CLEAR_EOL="el",
+                                 CLEAR_EOS="ed", CLEAR_SCREEN="clear")
+
+    def _parse_capabilities(self, **kwds):
+        """Parses the given terminal capabilities and stores them as
+        control sequences. This method accepts keyword arguments only; the
+        name of the keyword argument is the control sequence and the
+        value of the keyword argument is the corresponding capability name."""
+        self._control_sequences.update((
+            (name, self._get_string_capability(capability_name))
+            for name, capability_name in kwds.items()
+        ))
+
     def _parse_foreground_control_sequences(self):
         """Parses the control sequences from terminfo that set the foreground
         color of the terminal."""
@@ -269,18 +467,9 @@ class CursesTerminal(Terminal):
     def _parse_styling_control_sequences(self):
         """Parses the control sequences from terminfo that perform styling of
         the output."""
-
-        capability_pairs = {
-            "BLINK": "blink",
-            "BOLD": "bold",
-            "DIM": "dim",
-            "NORMAL": "sgr0",
-            "REVERSE": "rev"
-        }
-        self._control_sequences.update((
-            (name, self._get_string_capability(capability_name))
-            for name, capability_name in capability_pairs.items()
-        ))
+        self._parse_capabilities(BLINK="blink", BOLD="bold", DIM="dim",
+                                 NORMAL="sgr0", REVERSE="rev",
+                                 UNDERLINE="smul")
 
     def _tparm(self, capability, index):
         """Wrapper around ``curses.tparm`` that returns an empty string in

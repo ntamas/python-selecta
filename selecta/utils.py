@@ -1,3 +1,11 @@
+from itertools import chain
+from string import maketrans, printable
+import unicodedata
+
+__all__ = ["each_index_of_string", "identity", "is_printable",
+           "list_packer", "safeint"]
+
+
 def each_index_of_string(string, corpus):
     """Finds all occurrences of a given string in a corpus.
 
@@ -17,9 +25,28 @@ def each_index_of_string(string, corpus):
         yield start
 
 
+def flatten(iterable):
+    """Flattens an iterable yielding iterables into a single iterable."""
+    return chain.from_iterable(iterable)
+
+
 def identity(arg):
     """An identity function that simply returns its argument."""
     return arg
+
+
+_is_printable_helper = maketrans(printable, ' '*len(printable))
+
+
+def is_printable(string):
+    """Returns whether the given string consists of printable characters only.
+    If the string is a Unicode string, this function uses the ``unicodedata``
+    to decide which characters are printable. If the string contains raw bytes,
+    it considers the characters in ``string.printable`` as printable."""
+    if isinstance(string, unicode):
+        return all(unicodedata.category(char) != 'Cc' for char in string)
+    else:
+        return all(_is_printable_helper[ord(char)] == ' ' for char in string)
 
 
 def list_packer(*args):
