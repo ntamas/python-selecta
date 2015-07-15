@@ -199,7 +199,8 @@ class FuzzyIndex(IndexBase):
                 score += (end - start)
 
             start = end
-        return score, end
+
+        return score, start+1
 
     def _prepare_query(self, query):
         """Given a query string, returns some pre-computed information that
@@ -254,7 +255,7 @@ class FuzzyIndex(IndexBase):
                 score, match_end = self._find_end_of_match(rest, token, match_start)
                 if match_end and (best_score is None or score < best_score):
                     best_score = score
-                    best_match = match_start, match_end+1
+                    best_match = match_start, match_end
 
         return best_score, best_match
 

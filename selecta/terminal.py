@@ -102,17 +102,21 @@ class Terminal(object):
         platform, the availability of the various helper modules and the
         given output stream.
 
-        When the ``curses`` module is available, this class queries the terminfo
-        database for the escape sequences that are required for coloring and
-        cursor movement. When the ``curses`` module is not available, this class
-        assumes that the terminal understands ANSI escape sequences. On Windows,
-        the ``colorama`` module is used to silently convert ANSI escape sequences
-        into the appropriate Windows API calls.
+        When the ``curses`` module is available, the function will create
+        a class that queries the terminfo database for the escape sequences that
+        are required for coloring and cursor movement. When the ``curses``
+        module is not available, but the ``colorama`` module is installed, the
+        function will create a class that assumes that the terminal understands
+        ANSI escape sequences (leaving it up to ``colorama`` to wrap
+        ``sys.stdout`` properly to ensure that ANSI escape sequences are
+        understood). If everything else fails, the function creates a class that
+        represents a dumb terminal without capabilities.
 
         In all platforms, the class also checks whether the stream that the
         class will operate on (typically ``sys.stdout``) is attached to a TTY.
         If not, the terminal is assumed to be a dumb terminal with no coloring and
-        cursor movement capabilities.
+        cursor movement capabilities. If you want to override this behaviour,
+        set ``is_tty`` to ``True`` or ``False`` instead of ``None``.
 
         Args:
             stream (file-like or None): the stream that will be used for
@@ -147,7 +151,6 @@ class Terminal(object):
         self.stream = stream or sys.stdout
         self._initialized = False
         self._control_sequences = None
-        self._parameterized_control_sequences = None
         self._deinit_hook = None
         if is_tty is not None:
             self._is_tty = bool(is_tty)
@@ -165,7 +168,6 @@ class Terminal(object):
             raise TerminalInitError("terminal is already initialized")
 
         self._control_sequences = self._create_empty_control_sequences()
-        self._parameterized_control_sequences = {}
         self._deinit_hook = None
 
         self._initialized = True
@@ -185,7 +187,6 @@ class Terminal(object):
 
         self._is_tty = False
         self._control_sequences = None
-        self._parameterized_control_sequences = None
         self._deinit_hook = None
         self._initialized = False
 
@@ -289,8 +290,6 @@ class Terminal(object):
 
             - ``BOL`` moves the cursor to the beginning of the current line
 
-            - ``EOL`` moves the cursor to the end of the current line
-
             - ``CLEAR_BOL`` clears everything up to the beginning of the
               current line while keeping the cursor in the same place
 
@@ -353,6 +352,7 @@ class Terminal(object):
             "HIDE_CURSOR SHOW_CURSOR".split()
         keys.extend(self._COLORS)
         keys.extend("FG_{0}".format(color) for color in self._COLORS)
+        keys.extend("BG_{0}".format(color) for color in self._COLORS)
         return dict((key, '') for key in keys)
 
 
@@ -368,6 +368,7 @@ class CursesTerminal(Terminal):
 
     @Terminal.supported.getter
     def supported(self):
+        return False
         if not self._is_tty:
             return False
         try:
@@ -500,6 +501,45 @@ class ANSITerminal(Terminal):
         import colorama
         colorama.init()
         self._deinit_hook = colorama.deinit
+
+        self._control_sequences.update(
+            UP="\x1b[1A",
+            DOWN="\x1b[1B",
+            RIGHT="\x1b[1C",
+            LEFT="\x1b[1D",
+            BOL="\r",
+            CLEAR_BOL="\x1b[1K",
+            CLEAR_EOL="\x1b[K",
+            CLEAR_EOS="\x1b[J",
+            CLEAR_SCREEN="\x1b[2J",
+            HIDE_CURSOR="\x1b[?25l",
+            SHOW_CURSOR="\x1b[?25h",
+
+            NORMAL="\x1b[0m",
+            BOLD="\x1b[1m",
+            DIM="\x1b[2m",
+            UNDERLINE="\x1b[4m",
+            BLINK="\x1b[5m",
+            REVERSE="\x1b[7m",
+
+            FG_BLACK="\x1b[30m",
+            FG_RED="\x1b[31m",
+            FG_GREEN="\x1b[32m",
+            FG_YELLOW="\x1b[33m",
+            FG_BLUE="\x1b[34m",
+            FG_MAGENTA="\x1b[35m",
+            FG_CYAN="\x1b[36m",
+            FG_WHITE="\x1b[37m",
+
+            BG_BLACK="\x1b[40m",
+            BG_RED="\x1b[41m",
+            BG_GREEN="\x1b[42m",
+            BG_YELLOW="\x1b[43m",
+            BG_BLUE="\x1b[44m",
+            BG_MAGENTA="\x1b[45m",
+            BG_CYAN="\x1b[46m",
+            BG_WHITE="\x1b[47m"
+        )
 
 
 class DumbTerminal(Terminal):

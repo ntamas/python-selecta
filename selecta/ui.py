@@ -149,6 +149,7 @@ class SmartTerminalUI(TerminalUI):
             raise NotSupportedError("SmartTerminalUI requires a terminal that "
                                     "supports cursor movement")
         self._query = None
+        self._ui_shown = False
         self.reset()
 
     def choose_item(self, initial_query=None):
@@ -185,6 +186,13 @@ class SmartTerminalUI(TerminalUI):
     def hide(self):
         """Hides the UI. This function assumes that the cursor is currently
         in the first row of the UI."""
+        if not self._ui_shown:
+            return
+
+        self._hide()
+        self._ui_shown = False
+
+    def _hide(self):
         self.terminal.move_cursor(x=0)
         self.terminal.clear_to_eos()
 
@@ -223,6 +231,15 @@ class SmartTerminalUI(TerminalUI):
     def refresh(self):
         """Redraws the UI. Assumes that the cursor is in the row where the
         drawing should start."""
+
+        num_lines = self.hit_list_limit + 1
+        if not self._ui_shown:
+            # Ensure that there are enough empty lines at the bottom of the
+            # terminal to show the UI
+            self.terminal.write("\n" * num_lines)
+            self.terminal.move_cursor(dy=-num_lines)
+            self._ui_shown = True
+
         query = self.query
 
         self.terminal.move_cursor(x=0)
@@ -270,7 +287,7 @@ class SmartTerminalUI(TerminalUI):
     @property
     def selected_item(self):
         """The currently selected item on the UI."""
-        if self._selected_index is None or self._selected_index <= 0:
+        if self._selected_index is None or self._selected_index < 0:
             return None
         else:
             return self._best_matches[self._selected_index]
