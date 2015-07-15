@@ -251,10 +251,7 @@ class SmartTerminalUI(TerminalUI):
             # Draw the matches first
             self.terminal.move_cursor(x=0, dy=1)
             num_lines_printed = self._show_matches(self._best_matches)
-            while num_lines_printed < self.hit_list_limit:
-                self.terminal.clear_to_eol()
-                self.terminal.move_cursor(x=0, dy=1)
-                num_lines_printed += 1
+            self.terminal.clear_to_eos()
 
             # Now draw the prompt and the query
             self.terminal.move_cursor(x=0, dy=-num_lines_printed-1)
