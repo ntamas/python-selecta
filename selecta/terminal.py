@@ -368,7 +368,6 @@ class CursesTerminal(Terminal):
 
     @Terminal.supported.getter
     def supported(self):
-        return False
         if not self._is_tty:
             return False
         try:
