@@ -7,7 +7,6 @@ from selecta.renderers import MatchRenderer
 from selecta.utils import is_printable, safeint
 
 import re
-import unicodedata
 
 __all__ = ["UI", "DumbTerminalUI", "SmartTerminalUI"]
 
@@ -259,7 +258,6 @@ class SmartTerminalUI(TerminalUI):
             # TODO: truncate the query from the front if too wide
             self.terminal.write(query, raw=True)
             self.terminal.clear_to_eol()
-
 
     def reset(self):
         """Resets the UI to the initial state (no query, no matches, no
