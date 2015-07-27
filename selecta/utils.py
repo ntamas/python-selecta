@@ -1,5 +1,5 @@
 from itertools import chain
-from string import maketrans, printable
+from string import printable
 import unicodedata
 
 __all__ = ["each_index_of_string", "identity", "is_printable",
@@ -35,7 +35,13 @@ def identity(arg):
     return arg
 
 
-_is_printable_helper = maketrans(printable, ' '*len(printable))
+try:
+    # Python 2.x
+    from string import maketrans
+    _is_printable_helper = maketrans(printable, ' '*len(printable))
+except ImportError:
+    # Python 3.x
+    _is_printable_helper = printable.maketrans(printable, ' '*len(printable))
 
 
 def is_printable(string):

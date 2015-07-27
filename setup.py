@@ -25,8 +25,7 @@ options = dict(
         ]
     },
 
-    # TODO
-    # test_suite="selecta.test.suite",
+    test_suite="tests",
 
     platforms='ALL',
     classifiers=[
