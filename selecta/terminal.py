@@ -1,5 +1,6 @@
 """Terminal handling related classes and functions."""
 
+import codecs
 import os
 import re
 import sys
@@ -13,7 +14,8 @@ __all__ = ["Keycodes", "Terminal", "getch", "reopened_terminal"]
 
 def _find_getch():
     """Returns a cross-platform function that can be used to read a single
-    character from the terminal without echoing it to the user."""
+    character from the terminal without echoing it to the user, either in
+    blocking or nonblocking mode."""
 
     try:
         import termios
@@ -21,21 +23,58 @@ def _find_getch():
         # Non-POSIX system, so let's try msvcrt.getch
         try:
             import msvcrt
-            return msvcrt.getch
+
+            def _getch(block=True):
+                """Reads a single character from the terminal without echoing it
+                to the user.
+
+                Args:
+                    block (bool): whether to wait for a keypress if there are
+                        no characters in the terminal buffer.
+
+                Returns:
+                    the character read from the terminal or ``None`` if there
+                    was no character waiting to be read and ``block`` was
+                    set to ``False``. May also return a full ANSI escape
+                    sequence for cursor keys.
+                """
+                if not block and not msvcrt.kbhit():
+                    return None
+                else:
+                    # TODO: ensure that msvcrt.getch() returns escape sequences
+                    # corresponding to cursor keys in a single sequence
+                    return msvcrt.getch()
         except ImportError:
-            def _getch():
+            def _getch(block=True):
                 raise NotImplementedError
             return _getch
 
-    import tty
-    def _getch():
+    from select import select
+    from tty import setraw
+
+    def _kbhit(fd):
+        rlist, _, _ = select([fd], [], [], 0)
+        return bool(rlist)
+
+    def _getch(block=True):
         """Reads a single character from the terminal without echoing it
         to the user."""
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
-            tty.setraw(fd)
-            return sys.stdin.read(1)
+            setraw(fd)
+
+            # If we are in nonblocking mode and there is no input available
+            # on fd, just return
+            if not block and not _kbhit(fd):
+                return None
+
+            # Escape sequences should be read in a single chunk so that's
+            # why we have to loop below
+            result = [os.read(fd, 1)]
+            while _kbhit(fd):
+                result.append(os.read(fd, 1))
+            return b"".join(result)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
@@ -51,6 +90,7 @@ class Keycodes(object):
     BREAK = '\x03'
     EOF = '\x04'
     ENTER = '\r'
+    ESCAPE = '\x1b'
     DELETE = '\x7f'
 
     CTRL_H = '\x08'
@@ -61,6 +101,11 @@ class Keycodes(object):
     CTRL_P = '\x10'
     CTRL_R = '\x12'
     CTRL_W = '\x17'
+
+    UP = object()
+    LEFT = object()
+    RIGHT = object()
+    DOWN = object()
 
     @classmethod
     def is_backspace_like(cls, char):
@@ -152,6 +197,7 @@ class Terminal(object):
         self._initialized = False
         self._control_sequences = None
         self._deinit_hook = None
+        self._input_encoding = None
         if is_tty is not None:
             self._is_tty = bool(is_tty)
         else:
@@ -169,6 +215,7 @@ class Terminal(object):
 
         self._control_sequences = self._create_empty_control_sequences()
         self._deinit_hook = None
+        self._input_encoding = self._detect_input_encoding()
 
         self._initialized = True
 
@@ -188,6 +235,8 @@ class Terminal(object):
         self._is_tty = False
         self._control_sequences = None
         self._deinit_hook = None
+        self._input_encoding = None
+
         self._initialized = False
 
     def clear_to_eol(self):
@@ -203,15 +252,49 @@ class Terminal(object):
     def getch(self):
         """Reads a single character from the terminal without echoing it
         to the user. Handles Ctrl-C and EOF properly by raising
-        KeyboardInterrupt or EOFError when needed. If you don't need this
-        behaviour, use the raw getch()_ function.
+        KeyboardInterrupt or EOFError when needed. Also remaps some cursor
+        movement escape sequences to the appropriate constants in
+        ``Keycodes``. If you don't need this behaviour, use the raw getch()_
+        function.
+
+        Returns:
+            the raw character from the terminal or one of the constants from
+            the ``Keycodes`` class for some special keys.
+
+        Raises:
+            KeyboardInterrupt: when the user pressed Ctrl-C
+            EOFError: when the user typed an end-of-file character
         """
         char = getch()
         if char == Keycodes.BREAK:
             raise KeyboardInterrupt
-        if char == Keycodes.EOF:
+        elif char == Keycodes.EOF:
             raise EOFError
-        return char
+        elif char == b"\n":
+            # Special treatment for \n: sometimes it is the same as the
+            # DOWN control sequence, and we don't want to report
+            # Keycodes.DOWN instead
+            pass
+        elif char == b"\x1b[B" and self._control_sequences.get("DOWN") == b"\n":
+            # ANSI escape sequence for the 'down' key. We treat this as
+            # DOWN when the DOWN sequence is equal to '\n'; this is an
+            # educated guess in such cases.
+            return Keycodes.DOWN
+        elif char == self._control_sequences.get("UP"):
+            return Keycodes.UP
+        elif char == self._control_sequences.get("LEFT"):
+            return Keycodes.LEFT
+        elif char == self._control_sequences.get("RIGHT"):
+            return Keycodes.RIGHT
+
+        # Time to try and decode the input if we know the input encoding
+        if self._input_encoding:
+            try:
+                return char.decode(self._input_encoding)
+            except UnicodeError:
+                return char
+        else:
+            return char
 
     @contextmanager
     def hidden_cursor(self):
@@ -222,6 +305,11 @@ class Terminal(object):
             yield
         finally:
             self.write("${SHOW_CURSOR}")
+
+    @property
+    def input_encoding(self):
+        """The input encoding of the terminal."""
+        return self._input_encoding
 
     def move_cursor(self, x=None, y=None, dx=0, dy=0):
         """Moves the cursor to an absolute location or to a location relative
@@ -256,7 +344,6 @@ class Terminal(object):
                 self.write("$RIGHT" * dx)
             elif dx < 0:
                 self.write("$LEFT" * -dx)
-
 
     def render(self, template):
         """Replaces tokens of the form ``$TOKEN`` and ``${TOKEN}`` in the given
@@ -354,6 +441,15 @@ class Terminal(object):
         keys.extend("FG_{0}".format(color) for color in self._COLORS)
         keys.extend("BG_{0}".format(color) for color in self._COLORS)
         return dict((key, '') for key in keys)
+
+    def _detect_input_encoding(self):
+        """Detects the input encoding of the terminal."""
+        encoding = sys.stdin.encoding
+        if encoding is None:
+            # hmmm, input encoding not known. Let's assume that it is the
+            # same as the stream's encoding.
+            encoding = getattr(self.stream, "encoding", None)
+        return encoding or sys.getdefaultencoding()
 
 
 class CursesTerminal(Terminal):
@@ -559,8 +655,14 @@ def reopened_terminal():
     tty = os.ctermid()
     saved_stdin, saved_stdout = sys.stdin, sys.stdout
     try:
-        sys.stdin = open(tty, "r")
-        sys.stdout = open(tty, "w")
+        if saved_stdin.encoding is not None:
+            sys.stdin = codecs.open(tty, "r", encoding=saved_stdin.encoding)
+        else:
+            sys.stdin = open(tty, "r")
+        if saved_stdout.encoding is not None:
+            sys.stdout = codecs.open(tty, "w", encoding=saved_stdout.encoding)
+        else:
+            sys.stdout = open(tty, "w")
         yield
     finally:
         sys.stdin, sys.stdout = saved_stdin, saved_stdout

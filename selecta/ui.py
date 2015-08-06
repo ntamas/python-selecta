@@ -155,7 +155,6 @@ class SmartTerminalUI(TerminalUI):
         self.query = initial_query or ''
         while True:
             try:
-                # TODO: Unicode handling
                 char = self.terminal.getch()
             except KeyboardInterrupt:
                 return None
@@ -166,14 +165,16 @@ class SmartTerminalUI(TerminalUI):
                 return self.selected_item
             elif Keycodes.is_backspace_like(char):
                 self.query = self.query[:-1]
-            elif char == Keycodes.CTRL_N:    # TODO: handle arrow key
+            elif char == Keycodes.CTRL_N or char == Keycodes.DOWN:
                 self.adjust_selected_index_by(1)
-            elif char == Keycodes.CTRL_P:    # TODO: handle arrow key
+            elif char == Keycodes.CTRL_P or char == Keycodes.UP:
                 self.adjust_selected_index_by(-1)
             elif char == Keycodes.CTRL_U:
                 self.query = ''
             elif char == Keycodes.CTRL_W:
                 self.query = re.sub("[^ ]* *$", "", self.query)
+            elif char == Keycodes.ESCAPE:
+                return None
             elif is_printable(char):
                 self.query += char
             else:
@@ -196,13 +197,15 @@ class SmartTerminalUI(TerminalUI):
         self.terminal.clear_to_eos()
 
     def adjust_selected_index_by(self, offset, wrap=True):
-        """Adjusts the selected index with the given offset, wrapping around
-        the result list.
+        """Adjusts the selected index with the given offset, optionally wrapping
+        around the result list.
 
         Args:
             offset (int): the offset to add to the selected index
             wrap (bool): whether to wrap around the result list
         """
+        if self.selected_index is None:
+            return
         new_index = int(self.selected_index) + offset
         if wrap:
             new_index = new_index % self.num_visible_matches

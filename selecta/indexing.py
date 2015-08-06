@@ -42,7 +42,7 @@ class IndexBase(Index):
             of the item as is.
     """
 
-    def __init__(self, displayer=str, tokenizer=list_packer,
+    def __init__(self, displayer=unicode, tokenizer=list_packer,
                  match_factory=Match):
         self.displayer = displayer
         self.match_factory = match_factory

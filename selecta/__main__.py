@@ -65,7 +65,7 @@ def create_command_line_parser():
     return parser
 
 
-def prepare_index(strings=sys.stdin, transform=str.strip):
+def prepare_index(strings=sys.stdin, transform=unicode.strip, encoding=None):
     """Prepares the index to be used by the application from strings coming
     from the given input stream or iterable.
 
@@ -73,13 +73,21 @@ def prepare_index(strings=sys.stdin, transform=str.strip):
         strings (iterable of str): the strings to be included in the index
         transform (callable or None): a callable to call on each of the strings
             from the iterable before they are fed into the index
+        encoding (str or None): the encoding of the strings in the iterable
+            if they are not Unicode. ``None`` means to fall back to the
+            ``encoding`` attribute of the ``strings`` iterable if there is
+            such an attribute, or to ``sys.getdefaultencoding()``.
 
     Returns:
         selecta.indexing.Index: the prepared index
     """
     transform = transform or identity
+    encoding = encoding or getattr(strings, "encoding", None) or \
+        sys.getdefaultencoding()
     index = FuzzyIndex()
     for string in strings:
+        if not isinstance(string, unicode):
+            string = string.decode(encoding)
         index.add(transform(string))
     return index
 
